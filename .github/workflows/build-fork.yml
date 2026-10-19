@@ -57,6 +57,8 @@ jobs:
           grep -q '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_xiaomi_redmi-router-ax6000=y$' .config || { echo "::error::AX6000 设备未选中"; exit 1; }
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config || { echo "::error::PassWall 未选中"; exit 1; }
           grep -q '^CONFIG_PACKAGE_luci-app-mosdns=y$' .config || { echo "::error::MosDNS 未选中（三方源没生效）"; exit 1; }
+          grep -q '^CONFIG_PACKAGE_dnsmasq_full=y$' .config || { echo "::error::dnsmasq-full 未选中"; exit 1; }
+          grep -q '^# CONFIG_PACKAGE_dnsmasq is not set$' .config || { echo "::error::dnsmasq 未关闭，会与 dnsmasq-full 冲突"; exit 1; }
 
       - name: 下载源码包
         working-directory: src
