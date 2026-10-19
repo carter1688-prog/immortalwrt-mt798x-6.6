@@ -2,6 +2,9 @@ name: build-ax6000
 on:
   workflow_dispatch:
   push:
+    paths:
+      - '.github/workflows/build-fork.yml'
+
 permissions:
   contents: write
 
@@ -49,52 +52,43 @@ jobs:
       - name: 注入默认配置（刷完首次开机自动生效）
         run: |
           mkdir -p src/package/base-files/files/etc/uci-defaults
-          cat > src/package/base-files/files/etc/uci-defaults/99-ax6000 <<'EOF'
-#!/bin/sh
-# ===== 0. 主机名（四台可各自改）=====
-uci set system.@system[0].hostname='AX6000'
-
-# ===== 1. IPv6 全关（防 IP 泄露）=====
-uci -q delete network.wan6
-uci set network.lan.ip6assign='0'
-uci set dhcp.lan.ra='disabled'
-uci set dhcp.lan.dhcpv6='disabled'
-uci set dhcp.lan.ndp='disabled'
-/etc/init.d/odhcpd disable
-/etc/init.d/odhcpd stop
-
-# ===== 2. dnsmasq 只走 MosDNS + 丢弃 AAAA =====
-uci set dhcp.@dnsmasq[0].noresolv='1'
-uci -q delete dhcp.@dnsmasq[0].server
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5335'
-uci set dhcp.@dnsmasq[0].rebind_protection='0'
-uci set dhcp.@dnsmasq[0].filter_aaaa='1'
-
-# ===== 3. MosDNS：启用 + 缓存 + DoH（避开被卡的 DoT）=====
-uci set mosdns.config.enabled='1'
-uci set mosdns.config.cache='1'
-uci set mosdns.config.redirect='0'
-uci set mosdns.config.concurrent='2'
-uci set mosdns.config.prefer_ipv4='1'
-uci -q delete mosdns.config.remote_dns
-uci add_list mosdns.config.remote_dns='https://1.1.1.1/dns-query'
-uci add_list mosdns.config.remote_dns='https://dns.google/dns-query'
-
-# ===== 4. 阻断 STUN（防 WebRTC 绕过代理）=====
-uci -q delete firewall.stun_block
-uci set firewall.stun_block='rule'
-uci set firewall.stun_block.name='Block-STUN'
-uci set firewall.stun_block.src='lan'
-uci set firewall.stun_block.proto='udp'
-uci set firewall.stun_block.dest_port='3478 3479 19302 19303'
-uci set firewall.stun_block.target='REJECT'
-
-uci commit
-exit 0
-EOF
-          chmod +x src/package/base-files/files/etc/uci-defaults/99-ax6000
-          echo "----- 注入的脚本前 5 行 -----"
-          head -5 src/package/base-files/files/etc/uci-defaults/99-ax6000
+          F=src/package/base-files/files/etc/uci-defaults/99-ax6000
+          {
+            echo '#!/bin/sh'
+            echo "uci set system.@system[0].hostname='AX6000'"
+            echo "uci -q delete network.wan6"
+            echo "uci set network.lan.ip6assign='0'"
+            echo "uci set dhcp.lan.ra='disabled'"
+            echo "uci set dhcp.lan.dhcpv6='disabled'"
+            echo "uci set dhcp.lan.ndp='disabled'"
+            echo "/etc/init.d/odhcpd disable"
+            echo "/etc/init.d/odhcpd stop"
+            echo "uci set dhcp.@dnsmasq[0].noresolv='1'"
+            echo "uci -q delete dhcp.@dnsmasq[0].server"
+            echo "uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5335'"
+            echo "uci set dhcp.@dnsmasq[0].rebind_protection='0'"
+            echo "uci set dhcp.@dnsmasq[0].filter_aaaa='1'"
+            echo "uci set mosdns.config.enabled='1'"
+            echo "uci set mosdns.config.cache='1'"
+            echo "uci set mosdns.config.redirect='0'"
+            echo "uci set mosdns.config.concurrent='2'"
+            echo "uci set mosdns.config.prefer_ipv4='1'"
+            echo "uci -q delete mosdns.config.remote_dns"
+            echo "uci add_list mosdns.config.remote_dns='https://1.1.1.1/dns-query'"
+            echo "uci add_list mosdns.config.remote_dns='https://dns.google/dns-query'"
+            echo "uci -q delete firewall.stun_block"
+            echo "uci set firewall.stun_block='rule'"
+            echo "uci set firewall.stun_block.name='Block-STUN'"
+            echo "uci set firewall.stun_block.src='lan'"
+            echo "uci set firewall.stun_block.proto='udp'"
+            echo "uci set firewall.stun_block.dest_port='3478 3479 19302 19303'"
+            echo "uci set firewall.stun_block.target='REJECT'"
+            echo "uci commit"
+            echo "exit 0"
+          } > "$F"
+          chmod +x "$F"
+          echo "----- 注入的脚本 -----"
+          cat "$F"
 
       - name: 生成配置
         run: |
@@ -108,16 +102,16 @@ EOF
           echo "----- 无线 -----"; grep -E 'CONFIG_MTK_(MT_WIFI|DOT11_HE_AX|WHNAT)' .config || true
           grep -q '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_xiaomi_redmi-router-ax6000=y$' .config || { echo "::error::AX6000 设备未选中"; exit 1; }
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config || { echo "::error::PassWall 未选中"; exit 1; }
-          grep -q '^CONFIG_PACKAGE_luci-app-mosdns=y$' .config || { echo "::error::MosDNS 未选中（三方源没生效）"; exit 1; }
+          grep -q '^CONFIG_PACKAGE_luci-app-mosdns=y$' .config || { echo "::error::MosDNS 未选中"; exit 1; }
           grep -q '^CONFIG_PACKAGE_dnsmasq_full=y$' .config || { echo "::error::dnsmasq-full 未选中"; exit 1; }
-          grep -q '^# CONFIG_PACKAGE_dnsmasq is not set$' .config || { echo "::error::dnsmasq 未关闭，会与 dnsmasq-full 冲突"; exit 1; }
+          grep -q '^# CONFIG_PACKAGE_dnsmasq is not set$' .config || { echo "::error::dnsmasq 未关闭"; exit 1; }
 
       - name: 确认默认配置会被打进固件
         run: |
           F=src/package/base-files/files/etc/uci-defaults/99-ax6000
-          test -f $F || { echo "::error::默认配置脚本没写进去"; exit 1; }
-          grep -q 'Block-STUN' $F || { echo "::error::STUN 阻断规则缺失"; exit 1; }
-          grep -q "server='127.0.0.1#5335'" $F || { echo "::error::MosDNS 指向缺失"; exit 1; }
+          test -f "$F" || { echo "::error::默认配置脚本没写进去"; exit 1; }
+          grep -q 'Block-STUN' "$F" || { echo "::error::STUN 规则缺失"; exit 1; }
+          grep -q "127.0.0.1#5335" "$F" || { echo "::error::MosDNS 指向缺失"; exit 1; }
           echo ">>> OK：默认配置随 base-files 一起打包"
 
       - name: 下载源码包
@@ -146,10 +140,5 @@ EOF
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ax6000-r${{ github.run_number }}
-          name: AX6000 23.05 闭源驱动 PassWall MosDNS 默认防泄露 r${{ github.run_number }}
-          body: |
-            commit 8fd3008b (2025-04-06)｜内核 5.4｜mediatek-mt7986｜110M
-            自带：PassWall(Xray+Sing-box) + MosDNS(v5-lua) + dnsmasq-full
-            首次开机自动：关 IPv6 / 关 odhcpd / dnsmasq→MosDNS(5335) / DoH 上游 / 阻断 STUN
-            刷机：不保留配置；后台 192.168.6.1
+          name: AX6000 23.05 r${{ github.run_number }}
           files: out/*
