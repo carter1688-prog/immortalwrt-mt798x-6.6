@@ -49,6 +49,9 @@ jobs:
           mkdir -p src/package/base-files/files/etc/uci-defaults
           cat > src/package/base-files/files/etc/uci-defaults/99-ax6000 <<'EOF'
 #!/bin/sh
+# ===== 0. 主机名（四台可各自改）=====
+uci set system.@system[0].hostname='AX6000'
+
 # ===== 1. IPv6 全关（防 IP 泄露）=====
 uci -q delete network.wan6
 uci set network.lan.ip6assign='0'
@@ -75,7 +78,7 @@ uci -q delete mosdns.config.remote_dns
 uci add_list mosdns.config.remote_dns='https://1.1.1.1/dns-query'
 uci add_list mosdns.config.remote_dns='https://dns.google/dns-query'
 
-# ===== 4. 阻断 STUN，防 WebRTC 绕过代理暴露真实 IP =====
+# ===== 4. 阻断 STUN（防 WebRTC 绕过代理）=====
 uci -q delete firewall.stun_block
 uci set firewall.stun_block='rule'
 uci set firewall.stun_block.name='Block-STUN'
@@ -109,8 +112,10 @@ EOF
 
       - name: 确认默认配置会被打进固件
         run: |
-          test -f src/package/base-files/files/etc/uci-defaults/99-ax6000 || { echo "::error::默认配置脚本没写进去"; exit 1; }
-          grep -q 'Block-STUN' src/package/base-files/files/etc/uci-defaults/99-ax6000 || { echo "::error::STUN 阻断规则缺失"; exit 1; }
+          F=src/package/base-files/files/etc/uci-defaults/99-ax6000
+          test -f $F || { echo "::error::默认配置脚本没写进去"; exit 1; }
+          grep -q 'Block-STUN' $F || { echo "::error::STUN 阻断规则缺失"; exit 1; }
+          grep -q "server='127.0.0.1#5335'" $F || { echo "::error::MosDNS 指向缺失"; exit 1; }
           echo ">>> OK：默认配置随 base-files 一起打包"
 
       - name: 下载源码包
@@ -127,6 +132,7 @@ EOF
           find src/bin/targets -type f \( -name '*.bin' -o -name '*.ubi' -o -name '*.manifest' \) -exec cp {} out/ \;
           ls -lh out
           ls out | grep xiaomi_redmi-router-ax6000
+          cat src/version.buildinfo 2>/dev/null || true
 
       - name: 上传 artifact
         uses: actions/upload-artifact@v4
@@ -137,6 +143,11 @@ EOF
       - name: 发布 Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ax6000-${{ github.run_number }}
-          name: AX6000 23.05 闭源驱动 + PassWall + MosDNS（默认防泄露）#${{ github.run_number }}
+          tag_name: ax6000-r${{ github.run_number }}
+          name: AX6000 23.05 闭源驱动 PassWall MosDNS 默认防泄露 r${{ github.run_number }}
+          body: |
+            commit 8fd3008b (2025-04-06)｜内核 5.4｜mediatek-mt7986｜110M
+            自带：PassWall(Xray+Sing-box) + MosDNS(v5-lua) + dnsmasq-full
+            首次开机自动：关 IPv6 / 关 odhcpd / dnsmasq→MosDNS(5335) / DoH 上游 / 阻断 STUN
+            刷机：不保留配置；后台 192.168.6.1
           files: out/*
