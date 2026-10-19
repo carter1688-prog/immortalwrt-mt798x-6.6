@@ -35,11 +35,14 @@ jobs:
           grep -q 'KERNEL_PATCHVER:=5.4' target/linux/mediatek/Makefile
           grep -q 'mt7986' target/linux/mediatek/Makefile
 
-      - name: 更新 feeds
+      - name: 更新 feeds（含 mosdns 三方源）
         working-directory: src
         run: |
+          echo 'src-git mosdns https://github.com/sbwml/luci-app-mosdns.git;v5-lua' >> feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          echo "----- mosdns 包是否可见 -----"
+          ./scripts/feeds list -n | grep -E '^(mosdns|luci-app-mosdns|v2dat)$' || echo "!! 没找到 mosdns 相关包"
 
       - name: 生成配置
         run: |
@@ -49,10 +52,11 @@ jobs:
           cat ../package.append >> .config
           make defconfig
           echo "----- 设备 -----"; grep -E 'CONFIG_TARGET_(MULTI_PROFILE|DEVICE_mediatek)' .config || true
-          echo "----- 插件 -----"; grep -E 'CONFIG_PACKAGE_luci-app-passwall|CONFIG_PACKAGE_dnsmasq_full' .config || true
+          echo "----- 代理/DNS -----"; grep -E 'CONFIG_PACKAGE_luci-app-(passwall|mosdns)|CONFIG_PACKAGE_mosdns|CONFIG_PACKAGE_dnsmasq_full' .config || true
           echo "----- 无线 -----"; grep -E 'CONFIG_MTK_(MT_WIFI|DOT11_HE_AX|WHNAT)' .config || true
-          grep -q '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_xiaomi_redmi-router-ax6000=y$' .config
-          grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config
+          grep -q '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_xiaomi_redmi-router-ax6000=y$' .config || { echo "::error::AX6000 设备未选中"; exit 1; }
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config || { echo "::error::PassWall 未选中"; exit 1; }
+          grep -q '^CONFIG_PACKAGE_luci-app-mosdns=y$' .config || { echo "::error::MosDNS 未选中（三方源没生效）"; exit 1; }
 
       - name: 下载源码包
         working-directory: src
@@ -79,5 +83,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ax6000-${{ github.run_number }}
-          name: AX6000 23.05 闭源驱动 + PassWall #${{ github.run_number }}
+          name: AX6000 23.05 闭源驱动 + PassWall + MosDNS #${{ github.run_number }}
           files: out/*
