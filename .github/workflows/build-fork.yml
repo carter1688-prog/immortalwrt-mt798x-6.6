@@ -1,5 +1,7 @@
 name: build-ax6000
-on: [workflow_dispatch]
+on:
+  workflow_dispatch:
+  push:
 permissions:
   contents: write
 
