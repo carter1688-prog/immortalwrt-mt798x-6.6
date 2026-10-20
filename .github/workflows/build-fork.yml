@@ -1,10 +1,5 @@
 name: build-ax6000
-on:
-  workflow_dispatch:
-  push:
-    paths:
-      - '.github/workflows/build-fork.yml'
-
+on: [workflow_dispatch]
 permissions:
   contents: write
 
@@ -49,47 +44,6 @@ jobs:
           echo "----- mosdns 包是否可见 -----"
           ./scripts/feeds list -n | grep -E '^(mosdns|luci-app-mosdns|v2dat)$' || echo "!! 没找到 mosdns 相关包"
 
-      - name: 注入默认配置（刷完首次开机自动生效）
-        run: |
-          mkdir -p src/package/base-files/files/etc/uci-defaults
-          F=src/package/base-files/files/etc/uci-defaults/99-ax6000
-          {
-            echo '#!/bin/sh'
-            echo "uci set system.@system[0].hostname='AX6000'"
-            echo "uci -q delete network.wan6"
-            echo "uci set network.lan.ip6assign='0'"
-            echo "uci set dhcp.lan.ra='disabled'"
-            echo "uci set dhcp.lan.dhcpv6='disabled'"
-            echo "uci set dhcp.lan.ndp='disabled'"
-            echo "/etc/init.d/odhcpd disable"
-            echo "/etc/init.d/odhcpd stop"
-            echo "uci set dhcp.@dnsmasq[0].noresolv='1'"
-            echo "uci -q delete dhcp.@dnsmasq[0].server"
-            echo "uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5335'"
-            echo "uci set dhcp.@dnsmasq[0].rebind_protection='0'"
-            echo "uci set dhcp.@dnsmasq[0].filter_aaaa='1'"
-            echo "uci set mosdns.config.enabled='1'"
-            echo "uci set mosdns.config.cache='1'"
-            echo "uci set mosdns.config.redirect='0'"
-            echo "uci set mosdns.config.concurrent='2'"
-            echo "uci set mosdns.config.prefer_ipv4='1'"
-            echo "uci -q delete mosdns.config.remote_dns"
-            echo "uci add_list mosdns.config.remote_dns='https://1.1.1.1/dns-query'"
-            echo "uci add_list mosdns.config.remote_dns='https://dns.google/dns-query'"
-            echo "uci -q delete firewall.stun_block"
-            echo "uci set firewall.stun_block='rule'"
-            echo "uci set firewall.stun_block.name='Block-STUN'"
-            echo "uci set firewall.stun_block.src='lan'"
-            echo "uci set firewall.stun_block.proto='udp'"
-            echo "uci set firewall.stun_block.dest_port='3478 3479 19302 19303'"
-            echo "uci set firewall.stun_block.target='REJECT'"
-            echo "uci commit"
-            echo "exit 0"
-          } > "$F"
-          chmod +x "$F"
-          echo "----- 注入的脚本 -----"
-          cat "$F"
-
       - name: 生成配置
         run: |
           cd src
@@ -98,21 +52,13 @@ jobs:
           cat ../package.append >> .config
           make defconfig
           echo "----- 设备 -----"; grep -E 'CONFIG_TARGET_(MULTI_PROFILE|DEVICE_mediatek)' .config || true
-          echo "----- 代理/DNS -----"; grep -E 'CONFIG_PACKAGE_luci-app-(passwall|mosdns)|CONFIG_PACKAGE_mosdns|CONFIG_PACKAGE_dnsmasq_full' .config || true
+          echo "----- 代理/DNS -----"; grep -E 'CONFIG_PACKAGE_luci-app-(passwall|mosdns)|CONFIG_PACKAGE_mosdns|CONFIG_PACKAGE_dnsmasq' .config || true
           echo "----- 无线 -----"; grep -E 'CONFIG_MTK_(MT_WIFI|DOT11_HE_AX|WHNAT)' .config || true
           grep -q '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_xiaomi_redmi-router-ax6000=y$' .config || { echo "::error::AX6000 设备未选中"; exit 1; }
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config || { echo "::error::PassWall 未选中"; exit 1; }
-          grep -q '^CONFIG_PACKAGE_luci-app-mosdns=y$' .config || { echo "::error::MosDNS 未选中"; exit 1; }
-          grep -q '^CONFIG_PACKAGE_dnsmasq_full=y$' .config || { echo "::error::dnsmasq-full 未选中"; exit 1; }
-          grep -q '^# CONFIG_PACKAGE_dnsmasq is not set$' .config || { echo "::error::dnsmasq 未关闭"; exit 1; }
-
-      - name: 确认默认配置会被打进固件
-        run: |
-          F=src/package/base-files/files/etc/uci-defaults/99-ax6000
-          test -f "$F" || { echo "::error::默认配置脚本没写进去"; exit 1; }
-          grep -q 'Block-STUN' "$F" || { echo "::error::STUN 规则缺失"; exit 1; }
-          grep -q "127.0.0.1#5335" "$F" || { echo "::error::MosDNS 指向缺失"; exit 1; }
-          echo ">>> OK：默认配置随 base-files 一起打包"
+          grep -q '^CONFIG_PACKAGE_luci-app-mosdns=y$' .config || { echo "::error::MosDNS 未选中（三方源没生效）"; exit 1; }
+          grep -q '^CONFIG_PACKAGE_dnsmasq-full=y$' .config || { echo "::error::dnsmasq-full 未选中"; exit 1; }
+          grep -q '^# CONFIG_PACKAGE_dnsmasq is not set$' .config || { echo "::error::dnsmasq 未关闭，会与 dnsmasq-full 冲突"; exit 1; }
 
       - name: 下载源码包
         working-directory: src
@@ -128,7 +74,6 @@ jobs:
           find src/bin/targets -type f \( -name '*.bin' -o -name '*.ubi' -o -name '*.manifest' \) -exec cp {} out/ \;
           ls -lh out
           ls out | grep xiaomi_redmi-router-ax6000
-          cat src/version.buildinfo 2>/dev/null || true
 
       - name: 上传 artifact
         uses: actions/upload-artifact@v4
@@ -139,6 +84,6 @@ jobs:
       - name: 发布 Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ax6000-r${{ github.run_number }}
-          name: AX6000 23.05 r${{ github.run_number }}
+          tag_name: ax6000-${{ github.run_number }}
+          name: AX6000 23.05 闭源驱动 + PassWall + MosDNS #${{ github.run_number }}
           files: out/*
